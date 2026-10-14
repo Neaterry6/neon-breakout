@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>NEON BREAKOUT — brokenvzn</title>
+<meta name="description" content="A neon arcade breakout game. Built by brokenvzn.">
+<meta name="theme-color" content="#0b0b12">
+<style>
+  :root{
+    --cyan:#00f7ff;
+    --purple:#8a2be2;
+    --pink:#ff0080;
+    --bg:#07070d;
+    --panel:#101019;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0;height:100%}
+  body{
+    background:
+      radial-gradient(circle at 20% 10%, rgba(138,43,226,.22), transparent 45%),
+      radial-gradient(circle at 80% 90%, rgba(0,247,255,.18), transparent 45%),
+      var(--bg);
+    color:#e8e8f5;
+    font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    min-height:100%;overflow:hidden;
+    user-select:none;
+  }
+  #wrap{position:relative;width:min(96vw,760px)}
+  header{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:0 4px 10px;font-size:13px;letter-spacing:.14em;text-transform:uppercase;
+  }
+  .brand{
+    font-weight:800;letter-spacing:.22em;
+    background:linear-gradient(90deg,var(--cyan),var(--purple),var(--pink));
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .hud{display:flex;gap:18px;font-variant-numeric:tabular-nums;color:#9aa0b5}
+  .hud b{color:#fff;font-weight:700}
+  canvas{
+    display:block;width:100%;height:auto;border-radius:16px;
+    background:linear-gradient(180deg,#0c0c16,#08080f);
+    border:1px solid rgba(138,43,226,.35);
+    box-shadow:0 0 0 1px rgba(0,247,255,.06), 0 24px 70px -20px rgba(138,43,226,.55);
+    touch-action:none;
+  }
+  .overlay{
+    position:absolute;inset:0;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:14px;text-align:center;
+    background:rgba(6,6,12,.82);backdrop-filter:blur(6px);border-radius:16px;
+    padding:24px;
+  }
+  .overlay.hidden{display:none}
+  .overlay h1{
+    margin:0;font-size:clamp(22px,5vw,38px);letter-spacing:.1em;
+    background:linear-gradient(90deg,var(--cyan),var(--purple),var(--pink));
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .overlay p{margin:0;color:#9aa0b5;font-size:14px;max-width:40ch;line-height:1.6}
+  .overlay .big{font-size:15px;color:#fff}
+  .overlay .score{font-size:clamp(28px,7vw,48px);font-weight:800;color:#fff;font-variant-numeric:tabular-nums}
+  button{
+    font:inherit;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+    padding:13px 30px;border-radius:999px;cursor:pointer;color:#07070d;
+    background:linear-gradient(90deg,var(--cyan),var(--purple));
+    border:none;transition:transform .12s ease, filter .12s ease;
+  }
+  button:hover{transform:translateY(-2px);filter:brightness(1.12)}
+  button:active{transform:translateY(0)}
+  button.ghost{background:transparent;color:#9aa0b5;border:1px solid rgba(255,255,255,.16)}
+  footer{
+    margin-top:12px;font-size:11.5px;color:#5d6379;letter-spacing:.08em;
+    display:flex;gap:16px;flex-wrap:wrap;justify-content:center;padding:0 8px;text-align:center;
+  }
+  kbd{
+    background:#171722;border:1px solid #2a2a3a;border-bottom-width:2px;border-radius:5px;
+    padding:1px 6px;font-size:11px;color:#c9cbe0;font-family:inherit;
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <header>
+    <span class="brand">NEON BREAKOUT</span>
+    <span class="hud">
+      <span>SCORE <b id="score">0</b></span>
+      <span>LEVEL <b id="level">1</b></span>
+      <span>LIVES <b id="lives">3</b></span>
+    </span>
+  </header>
+
+  <canvas id="game" width="760" height="520" aria-label="Neon Breakout game"></canvas>
+
+  <div class="overlay" id="overlay">
+    <h1 id="ovTitle">NEON BREAKOUT</h1>
+    <p id="ovText">Clear every brick. Don't drop the ball.</p>
+    <div id="ovScore" style="display:none"></div>
+    <button id="ovBtn">Play</button>
+    <p style="font-size:12px;opacity:.75">Move with <kbd>←</kbd> <kbd>→</kbd> or your finger · <kbd>Space</kbd> to launch · <kbd>P</kbd> to pause</p>
+  </div>
+
+  <footer>
+    <span>Built by <b style="color:#9aa0b5">brokenvzn</b></span>
+    <span id="hi">BEST 0</span>
+  </footer>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var canvas = document.getElementById('game');
+  var ctx = canvas.getContext('2d');
+  var W = canvas.width, H = canvas.height;
+
+  var scoreEl = document.getElementById('score');
+  var levelEl = document.getElementById('level');
+  var livesEl = document.getElementById('lives');
+  var hiEl = document.getElementById('hi');
+  var overlay = document.getElementById('overlay');
+  var ovTitle = document.getElementById('ovTitle');
+  var ovText = document.getElementById('ovText');
+  var ovScore = document.getElementById('ovScore');
+  var ovBtn = document.getElementById('ovBtn');
+
+  var COLORS = ['#00f7ff', '#8a2be2', '#ff0080', '#39ff14', '#ffd400'];
+
+  // ---- state -------------------------------------------------------------
+  var state = 'menu';           // menu | ready | playing | paused | levelclear | over
+  var score = 0, level = 1, lives = 3;
+  var best = 0;
+  try { best = parseInt(localStorage.getItem('neonBreakoutBest') || '0', 10) || 0; } catch (e) { best = 0; }
+
+  var paddle = { w: 116, h: 14, x: W / 2 - 58, y: H - 42, speed: 560, vx: 0 };
+  var ball = { x: W / 2, y: H - 60, r: 7, vx: 0, vy: 0, speed: 340, stuck: true };
+  var bricks = [];
+  var particles = [];
+  var keys = { left: false, right: false };
+  var shake = 0;
+  var lastTime = 0;
+  var clearTimer = 0;
+
+  var BRICK = { rows: 5, cols: 11, h: 22, gap: 6, top: 62, sideGap: 22 };
+
+  function brickColor(row) {
+    return COLORS[row % COLORS.length];
+  }
+
+  function buildLevel() {
+    bricks = [];
+    var rows = Math.min(BRICK.rows + Math.floor((level - 1) / 2), 8);
+    var cols = BRICK.cols;
+    var sideGap = BRICK.sideGap;
+    var usable = W - sideGap * 2;
+    var bw = (usable - BRICK.gap * (cols - 1)) / cols;
+
+    for (var r = 0; r < rows; r++) {
+      for (var c = 0; c < cols; c++) {
+        // Later levels start with a few gaps so it stays interesting.
+        var skip = level > 1 && (r + c) % 7 === 0 && Math.random() < 0.28;
+        if (skip) continue;
+        bricks.push({
+          x: sideGap + c * (bw + BRICK.gap),
+          y: BRICK.top + r * (BRICK.h + BRICK.gap),
+          w: bw,
+          h: BRICK.h,
+          row: r,
+          // Higher rows are worth more and take an extra hit from level 3.
+          hp: (level >= 3 && r === 0) ? 2 : 1,
+          points: (rows - r) * 10,
+          color: brickColor(r),
+          alive: true
+        });
+      }
+    }
+  }
+
+  function resetBall() {
+    ball.stuck = true;
+    ball.x = paddle.x + paddle.w / 2;
+    ball.y = paddle.y - ball.r - 2;
+    ball.vx = 0;
+    ball.vy = 0;
+    ball.speed = 340 + (level - 1) * 26;
+  }
+
+  function launchBall() {
+    if (!ball.stuck) return;
+    ball.stuck = false;
+    var angle = (-70 + Math.random() * 40) * Math.PI / 180; // upward, slightly varied
+    ball.vx = Math.cos(angle) * ball.speed;
+    ball.vy = Math.sin(angle) * ball.speed;
+  }
+
+  function startGame() {
+    score = 0; level = 1; lives = 3;
+    paddle.w = 116; paddle.x = W / 2 - paddle.w / 2;
+    buildLevel();
+    resetBall();
+    particles = [];
+    state = 'ready';
+    overlay.classList.add('hidden');
+    // Hand focus back to the page. If the Play button keeps focus, the next
+    // Space press activates that button again and restarts the game instead of
+    // launching the ball.
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    syncHud();
+  }
+
+  function nextLevel() {
+    level++;
+    paddle.w = Math.max(78, 116 - (level - 1) * 5);
+    buildLevel();
+    resetBall();
+    state = 'ready';
+    syncHud();
+  }
+
+  function loseLife() {
+    lives--;
+    syncHud();
+    if (lives <= 0) {
+      gameOver();
+    } else {
+      resetBall();
+      state = 'ready';
+    }
+  }
+
+  function gameOver() {
+    state = 'over';
+    if (score > best) {
+      best = score;
+      try { localStorage.setItem('neonBreakoutBest', String(best)); } catch (e) {}
+    }
+    syncHud();
+    showOverlay('GAME OVER', 'You cleared ' + (level - 1) + ' level' + (level - 1 === 1 ? '' : 's') + '.', score, 'Play again');
+  }
+
+  function showOverlay(title, text, bigScore, btnLabel) {
+    ovTitle.textContent = title;
+    ovText.textContent = text;
+    if (typeof bigScore === 'number') {
+      ovScore.style.display = 'block';
+      ovScore.className = 'score';
+      ovScore.textContent = bigScore;
+    } else {
+      ovScore.style.display = 'none';
+    }
+    ovBtn.textContent = btnLabel;
+    overlay.classList.remove('hidden');
+  }
+
+  function syncHud() {
+    scoreEl.textContent = score;
+    levelEl.textContent = level;
+    livesEl.textContent = Math.max(0, lives);
+    hiEl.textContent = 'BEST ' + best;
+  }
+
+  function spawnParticles(x, y, color, count) {
+    for (var i = 0; i < count; i++) {
+      var a = Math.random() * Math.PI * 2;
+      var sp = 60 + Math.random() * 220;
+      particles.push({
+        x: x, y: y,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        life: 0.45 + Math.random() * 0.35,
+        age: 0,
+        color: color,
+        size: 1.5 + Math.random() * 2.5
+      });
+    }
+  }
+
+  // ---- update ------------------------------------------------------------
+  function update(dt) {
+    if (shake > 0) shake = Math.max(0, shake - dt * 60);
+
+    // particles always animate, even when paused-ish
+    for (var i = particles.length - 1; i >= 0; i--) {
+      var p = particles[i];
+      p.age += dt;
+      if (p.age >= p.life) { particles.splice(i, 1); continue; }
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vy += 420 * dt;
+      p.vx *= 0.99;
+    }
+
+    if (state === 'levelclear') {
+      clearTimer -= dt;
+      if (clearTimer <= 0) nextLevel();
+      return;
+    }
+
+    if (state !== 'playing' && state !== 'ready') return;
+
+    // paddle movement
+    var dir = 0;
+    if (keys.left) dir -= 1;
+    if (keys.right) dir += 1;
+    paddle.vx = dir * paddle.speed;
+    paddle.x += paddle.vx * dt;
+    if (paddle.x < 0) paddle.x = 0;
+    if (paddle.x + paddle.w > W) paddle.x = W - paddle.w;
+
+    if (ball.stuck) {
+      ball.x = paddle.x + paddle.w / 2;
+      ball.y = paddle.y - ball.r - 2;
+      return;
+    }
+
+    // sub-step the ball so it can't tunnel through a brick at high speed
+    var steps = Math.max(1, Math.ceil(Math.hypot(ball.vx, ball.vy) * dt / (ball.r * 0.9)));
+    var sdt = dt / steps;
+
+    for (var s = 0; s < steps; s++) {
+      ball.x += ball.vx * sdt;
+      ball.y += ball.vy * sdt;
+
+      // walls
+      if (ball.x - ball.r < 0) { ball.x = ball.r; ball.vx = Math.abs(ball.vx); }
+      if (ball.x + ball.r > W) { ball.x = W - ball.r; ball.vx = -Math.abs(ball.vx); }
+      if (ball.y - ball.r < 0) { ball.y = ball.r; ball.vy = Math.abs(ball.vy); }
+
+      // paddle
+      if (ball.vy > 0 &&
+          ball.y + ball.r >= paddle.y &&
+          ball.y - ball.r <= paddle.y + paddle.h &&
+          ball.x >= paddle.x - ball.r &&
+          ball.x <= paddle.x + paddle.w + ball.r) {
+
+        ball.y = paddle.y - ball.r;
+        // where it hit the paddle steers the angle: edges are sharper
+        var hit = (ball.x - (paddle.x + paddle.w / 2)) / (paddle.w / 2);
+        hit = Math.max(-1, Math.min(1, hit));
+        var angle = hit * (Math.PI / 3);           // up to 60 degrees
+        var speed = Math.hypot(ball.vx, ball.vy) * 1.012;
+        speed = Math.min(speed, 780);
+        ball.vx = Math.sin(angle) * speed;
+        ball.vy = -Math.cos(angle) * speed;
+        shake = 4;
+        spawnParticles(ball.x, paddle.y, '#00f7ff', 6);
+      }
+
+      // bricks
+      for (var b = 0; b < bricks.length; b++) {
+        var br = bricks[b];
+        if (!br.alive) continue;
+        if (ball.x + ball.r < br.x || ball.x - ball.r > br.x + br.w ||
+            ball.y + ball.r < br.y || ball.y - ball.r > br.y + br.h) continue;
+
+        // resolve on the axis of least penetration
+        var overlapX = Math.min(ball.x + ball.r - br.x, br.x + br.w - (ball.x - ball.r));
+        var overlapY = Math.min(ball.y + ball.r - br.y, br.y + br.h - (ball.y - ball.r));
+        if (overlapX < overlapY) {
+          ball.vx = -ball.vx;
+          ball.x += (ball.x < br.x + br.w / 2 ? -overlapX : overlapX);
+        } else {
+          ball.vy = -ball.vy;
+          ball.y += (ball.y < br.y + br.h / 2 ? -overlapY : overlapY);
+        }
+
+        br.hp -= 1;
+        spawnParticles(br.x + br.w / 2, br.y + br.h / 2, br.color, 9);
+        shake = 5;
+
+        if (br.hp <= 0) {
+          br.alive = false;
+          score += br.points;
+          syncHud();
+        }
+        break; // one brick per sub-step keeps collisions readable
+      }
+
+      // fell past the paddle
+      if (ball.y - ball.r > H) {
+        spawnParticles(ball.x, H - 6, '#ff0080', 14);
+        shake = 10;
+        loseLife();
+        return;
+      }
+    }
+
+    // level cleared?
+    var remaining = 0;
+    for (var k = 0; k < bricks.length; k++) if (bricks[k].alive) remaining++;
+    if (remaining === 0) {
+      score += 50; // clear bonus
+      syncHud();
+      state = 'levelclear';
+      clearTimer = 1.0;
+      showOverlay('LEVEL ' + level + ' CLEAR', 'Nice. Next one is faster.', null, 'Continue');
+      // auto-continue, but the button lets you skip the wait
+    }
+  }
+
+  // ---- draw --------------------------------------------------------------
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    ctx.save();
+    if (shake > 0) {
+      ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
+    }
+
+    // subtle grid
+    ctx.strokeStyle = 'rgba(138,43,226,.10)';
+    ctx.lineWidth = 1;
+    for (var gx = 0; gx < W; gx += 40) {
+      ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke();
+    }
+    for (var gy = 0; gy < H; gy += 40) {
+      ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke();
+    }
+
+    // bricks
+    for (var i = 0; i < bricks.length; i++) {
+      var b = bricks[i];
+      if (!b.alive) continue;
+      ctx.save();
+      ctx.shadowColor = b.color;
+      ctx.shadowBlur = 14;
+      ctx.fillStyle = b.color;
+      ctx.globalAlpha = b.hp > 1 ? 1 : 0.92;
+      roundRect(b.x, b.y, b.w, b.h, 5);
+      ctx.fill();
+      // top highlight
+      ctx.globalAlpha = 0.28;
+      ctx.fillStyle = '#ffffff';
+      roundRect(b.x + 2, b.y + 2, b.w - 4, 3, 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // paddle
+    ctx.save();
+    ctx.shadowColor = '#00f7ff';
+    ctx.shadowBlur = 20;
+    var grad = ctx.createLinearGradient(paddle.x, 0, paddle.x + paddle.w, 0);
+    grad.addColorStop(0, '#00f7ff');
+    grad.addColorStop(1, '#8a2be2');
+    ctx.fillStyle = grad;
+    roundRect(paddle.x, paddle.y, paddle.w, paddle.h, 7);
+    ctx.fill();
+    ctx.restore();
+
+    // ball
+    ctx.save();
+    ctx.shadowColor = '#ffffff';
+    ctx.shadowBlur = 22;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // particles
+    for (var p = 0; p < particles.length; p++) {
+      var pt = particles[p];
+      var t = 1 - pt.age / pt.life;
+      ctx.globalAlpha = Math.max(0, t);
+      ctx.fillStyle = pt.color;
+      ctx.fillRect(pt.x - pt.size / 2, pt.y - pt.size / 2, pt.size, pt.size);
+    }
+    ctx.globalAlpha = 1;
+
+    // launch hint
+    if (ball.stuck && (state === 'ready' || state === 'playing')) {
+      ctx.fillStyle = 'rgba(255,255,255,.55)';
+      ctx.font = '600 15px Segoe UI, system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('TAP OR PRESS SPACE TO LAUNCH', W / 2, paddle.y - 34);
+    }
+
+    ctx.restore();
+  }
+
+  function roundRect(x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  // ---- loop --------------------------------------------------------------
+  function frame(now) {
+    if (!lastTime) lastTime = now;
+    var dt = Math.min((now - lastTime) / 1000, 0.033); // clamp for stability
+    lastTime = now;
+    update(dt);
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  // ---- input -------------------------------------------------------------
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') { keys.left = true; e.preventDefault(); }
+    if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') { keys.right = true; e.preventDefault(); }
+    if (e.key === ' ' || e.key === 'Spacebar' || e.code === 'Space') {
+      e.preventDefault();
+      if (state === 'ready' || state === 'playing') { if (ball.stuck) launchBall(); }
+      else if (state === 'menu' || state === 'over') startGame();
+      else if (state === 'levelclear') { clearTimer = 0; overlay.classList.add('hidden'); }
+    }
+    if (e.key === 'p' || e.key === 'P') togglePause();
+  });
+
+  document.addEventListener('keyup', function (e) {
+    if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = false;
+    if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = false;
+  });
+
+  function togglePause() {
+    if (state === 'playing' || state === 'ready') {
+      state = 'paused';
+      showOverlay('PAUSED', 'Take your time.', null, 'Resume');
+    } else if (state === 'paused') {
+      state = ball.stuck ? 'ready' : 'playing';
+      overlay.classList.add('hidden');
+      lastTime = 0;
+    }
+  }
+
+  // touch / mouse: drag to move, tap to launch
+  function pointerX(clientX) {
+    var rect = canvas.getBoundingClientRect();
+    return (clientX - rect.left) / rect.width * W;
+  }
+
+  function handleMove(clientX) {
+    if (state !== 'playing' && state !== 'ready') return;
+    var x = pointerX(clientX);
+    paddle.x = Math.max(0, Math.min(W - paddle.w, x - paddle.w / 2));
+  }
+
+  canvas.addEventListener('touchstart', function (e) {
+    e.preventDefault();
+    handleMove(e.touches[0].clientX);
+    if (ball.stuck) launchBall();
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', function (e) {
+    e.preventDefault();
+    handleMove(e.touches[0].clientX);
+  }, { passive: false });
+
+  canvas.addEventListener('mousemove', function (e) {
+    handleMove(e.clientX);
+  });
+
+  canvas.addEventListener('mousedown', function (e) {
+    if (state === 'menu' || state === 'over') { startGame(); return; }
+    handleMove(e.clientX);
+    if (ball.stuck) launchBall();
+  });
+
+  ovBtn.addEventListener('click', function () {
+    if (state === 'paused') { togglePause(); return; }
+    if (state === 'levelclear') { clearTimer = 0; overlay.classList.add('hidden'); return; }
+    // A live game must not be restarted by a stray button activation.
+    if (state === 'ready' || state === 'playing') return;
+    startGame();
+  });
+
+  // pause automatically if the tab is hidden mid-game
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden && (state === 'playing' || state === 'ready')) togglePause();
+  });
+
+  // ---- go ----------------------------------------------------------------
+  buildLevel();
+  resetBall();
+  syncHud();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
